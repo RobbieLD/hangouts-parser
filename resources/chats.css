@@ -1,0 +1,48 @@
+body, html {
+    font-family: system-ui;
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+.chats {
+    display: grid;
+    grid-template-columns: 20em 1fr;
+    height: 100%;
+}
+
+.chats__list {
+    max-height: 100vh;
+    overflow: scroll;
+}
+
+.chats__list .chat:not(:first-child) {
+    border-top: solid 2px darkgray;
+}
+
+.chat {
+    padding: 1em;
+    cursor: pointer;
+    background-color: #f1f1f1;
+}
+
+.chat__messages {
+    font-size: 0.8em;
+    color: #767676;
+    text-align: right;
+}
+
+.chat:hover {
+    background-color: #00ff48;
+}
+
+.chat--active {
+    background-color: #2de561;
+}
+
+.viewport {
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
