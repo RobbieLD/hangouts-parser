@@ -88,7 +88,7 @@ fs.createReadStream(fullPath).pipe(parser).once('close', () => {
 parser.on('data', (data) => {
 
     const participants = data.conversation.conversation.participant_data
-    const fn = participants.map(pd => pd.fallback_name?.replace(' ', '-')).join('_') + '__' + chatId
+    const fn = chatId + '__' + participants.map(pd => pd.fallback_name?.replace(' ', '-')).join('_')
     chatId++
     const messages = []
     let numberOfMessages = 0
@@ -96,17 +96,26 @@ parser.on('data', (data) => {
     let time = ''
     let texts = []
     let isYou = false
+    let chatName = participants.map(p => p.fallback_name).join(', ')
 
     // Process the chat events for this conversation
     data.events.forEach(e => {
-        // TODO: handle non text message
         if (e.hasOwnProperty('chat_message') && e.chat_message.message_content.hasOwnProperty('segment')) {
+            // TODO: What other segments are there here other than links and text
             const text = e.chat_message.message_content.segment.filter(s => s.type === 'TEXT').map(s => s.text).join()
+            let link = e.chat_message.message_content.segment.filter(s => s.type === 'LINK').map(s => s.text).join()
+            link = `<a href='${link}' target='_blank'>${link}</a>`
             const name = participants.find(p => p.id.chat_id === e.sender_id.chat_id)?.fallback_name || 'Unknown'
             
             if (name === sender || !sender) {
                 // Add this message to the previous one
-                texts.push(text)    
+                if (text) {
+                    texts.push(text)
+                }
+
+                if (link) {
+                    texts.push(link)
+                }
             }
             else {
                 numberOfMessages++
@@ -151,14 +160,37 @@ parser.on('data', (data) => {
                     }
                 )
 
-                texts = [text]
+                texts = [text || link]
             }
 
             time = new Date(Number.parseInt(e.timestamp) / 1000)
             isYou = data.conversation.conversation.self_conversation_state.self_read_state.participant_id.chat_id === e.sender_id.chat_id
             sender = name
         }
-    });
+        // Conversation Rename
+        else if (e.hasOwnProperty('conversation_rename')) {
+            if (e.conversation_rename.new_name) {
+                console.log('Conversation renamed to: ' + e.conversation_rename.new_name)
+                chatName = e.conversation_rename.new_name
+            }
+        }
+        // Attachments
+        else if(e.hasOwnProperty('chat_message') && e.chat_message.hasOwnProperty('message_content')) {
+            e.chat_message.message_content.attachment.forEach(a => {
+                // TODO: Handle other types of attachments
+                if (a.embed_item.type[0] === 'PLUS_PHOTO') {
+                    const url = new URL(a.embed_item.plus_photo.url)
+                    const parts = url.pathname.split('/')
+                    const attachmentName = parts[parts.length - 1]
+                    // TODO: Add the images to the chat log
+                }
+                else {
+                    console.log('Other Attachment: ' + a)
+                }
+            })
+        }
+        // TODO: Calls
+    })
 
     const chat = {
         type: 'div',
@@ -172,7 +204,7 @@ parser.on('data', (data) => {
                 attributes: {
                     class: 'chat__participants'
                 },
-                content: participants.map(p => p.fallback_name).join(', ')
+                content: chatName
             },
             {
                 type: 'div',
@@ -184,7 +216,9 @@ parser.on('data', (data) => {
         ]
     }
 
-    chats.push(chat)
+    if (numberOfMessages) {
+        chats.push(chat)
+    }
 
     const html = [
         {
@@ -219,6 +253,7 @@ parser.on('data', (data) => {
         }
     ]
 
-    console.log(`Processed file: ${fn}`)
-    new htmlCreator(html).renderHTMLToFile(`./${dir}/${fn}.html`)
+    if (numberOfMessages) {
+        new htmlCreator(html).renderHTMLToFile(`./${dir}/${fn}.html`)
+    }
 })
