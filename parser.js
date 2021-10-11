@@ -2,6 +2,7 @@ const js = require('JSONStream')
 const fs = require('fs')
 const path = require('path')
 const htmlCreator = require('html-creator')
+const { send } = require('process')
 
 const fullPath = path.resolve(process.argv[2])
 const parser = js.parse('conversations.*')
@@ -202,7 +203,30 @@ parser.on('data', (data) => {
                 }
             })
         }
-        // TODO: Calls
+        // Calls
+        else if (e.hasOwnProperty('hangout_event')){
+            if (e.hangout_event.event_type === 'START_HANGOUT') {
+                texts.push('<div class="message__hangout">Hangout Started</div>')
+            }
+            else if (e.hangout_event.event_type === 'END_HANGOUT') {
+                const duration = new Date(e.hangout_event.hangout_duration_secs * 1000).toISOString().substr(11, 8)
+                texts.push(`<div class="message__hangout">Hangout Ended +${duration}</div>`)
+            }
+        }
+        // User change
+        else if (e.hasOwnProperty('membership_change')) {
+            const name = participants.find(p => p.id.chat_id === e.membership_change.participant_id.chat_id)?.fallback_name || 'Unknown'
+
+            if (e.membership_change.type === 'JOIN') {
+                texts.push(`<div class="message__hangout">${name} Joined</div>`)
+            }
+            else if (e.membership_change.type === ' LEAVE') {
+                texts.push(`<div class="message__hangout">${name} Left</div>`)
+            }
+        }
+        else {
+            console.log(e)
+        }
     })
 
     const chat = {
