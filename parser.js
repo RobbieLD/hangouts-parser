@@ -98,15 +98,28 @@ parser.on('data', (data) => {
     let isYou = false
     let chatName = participants.map(p => p.fallback_name).join(', ')
 
+    const escapeHTML = str => str.replace(/[&<>'"]/g,
+        tag => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            "'": '&#39;',
+            '"': '&quot;'
+        }[tag]));
+
     // Process the chat events for this conversation
     data.events.forEach(e => {
         if (e.hasOwnProperty('chat_message') && e.chat_message.message_content.hasOwnProperty('segment')) {
             // TODO: What other segments are there here other than links and text
-            const text = e.chat_message.message_content.segment.filter(s => s.type === 'TEXT').map(s => s.text).join()
+            const text = escapeHTML(e.chat_message.message_content.segment.filter(s => s.type === 'TEXT').map(s => s.text).join())
             let link = e.chat_message.message_content.segment.filter(s => s.type === 'LINK').map(s => s.text).join()
-            link = `<a href='${link}' target='_blank'>${link}</a>`
+
+            if (link) {
+                link = `<a href='${link}' target='_blank'>${link}</a>`
+            }
+
             const name = participants.find(p => p.id.chat_id === e.sender_id.chat_id)?.fallback_name || 'Unknown'
-            
+
             if (name === sender || !sender) {
                 // Add this message to the previous one
                 if (text) {
@@ -175,7 +188,7 @@ parser.on('data', (data) => {
             }
         }
         // Attachments
-        else if(e.hasOwnProperty('chat_message') && e.chat_message.hasOwnProperty('message_content')) {
+        else if (e.hasOwnProperty('chat_message') && e.chat_message.hasOwnProperty('message_content')) {
             e.chat_message.message_content.attachment.forEach(a => {
                 // TODO: Handle other types of attachments
                 if (a.embed_item.type[0] === 'PLUS_PHOTO') {
