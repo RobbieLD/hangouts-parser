@@ -1,24 +1,64 @@
 const js = require('JSONStream')
 const fs = require('fs')
 const path = require('path')
+const https = require('https')
 const htmlCreator = require('html-creator')
-const { send } = require('process')
 
-const fullPath = path.resolve(process.argv[2])
-const parser = js.parse('conversations.*')
+// *** You might need to configure these ***
+
+// The directory you're like the converted files placed in
 const dir = 'output'
+
+// The name of the json file in the export from google (usually called hangouts.json)
+const dataFileName = 'hangouts.json'
+
+// The default inline with of images
+const imageWith = '20em'
+
+// Set to true if you'd like the attachments downloaded
+const downloadAttachments = true
+
+const parser = js.parse('conversations.*')
 const chats = []
+const inputPath = path.resolve(`${process.argv[2]}`)
 let chatId = 1
+let attachmentId = 1
+const dataPath = `${inputPath}/${dataFileName}`
+const downloadRequests = []
+let downloadIndex = 0
+
+const downloadFile = (request, callback) => {
+    https.get(request.remotePath, (response) => {
+        const file = fs.createWriteStream(request.localPath)
+        response.pipe(file).once('close', () => {
+            file.close()
+            callback()
+        })
+    })
+}
+
+const downloadCallback = () => {
+    downloadIndex++
+    if (downloadIndex < downloadRequests.length) {
+        downloadFile(downloadRequests[downloadIndex], downloadCallback)
+    }
+}
 
 if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir);
+    fs.mkdirSync(dir)
+
+    if (downloadAttachments) {
+        fs.mkdirSync(`${dir}/attachments`)
+    }
+
+    fs.mkdirSync(`${dir}/chats`)
 }
 
 fs.copyFileSync('./resources/chat.css', `./${dir}/chat.css`)
 fs.copyFileSync('./resources/chats.css', `./${dir}/chats.css`)
 fs.copyFileSync('./resources/chats.js', `./${dir}/chats.js`)
 
-fs.createReadStream(fullPath).pipe(parser).once('close', () => {
+fs.createReadStream(dataPath).pipe(parser).once('close', () => {
     // Write out the index file
     const html = [
         {
@@ -84,6 +124,12 @@ fs.createReadStream(fullPath).pipe(parser).once('close', () => {
     ]
 
     new htmlCreator(html).renderHTMLToFile(`./${dir}/index.html`)
+
+    console.log(`Downloading ${downloadRequests.length} files`)
+    // Process the file queue
+    if (downloadRequests && downloadRequests.length) {
+        downloadFile(downloadRequests[downloadIndex], downloadCallback)
+    }
 })
 
 parser.on('data', (data) => {
@@ -93,11 +139,11 @@ parser.on('data', (data) => {
     chatId++
     const messages = []
     let numberOfMessages = 0
+    let texts = []
+    let chatName = participants.map(p => p.fallback_name).join(', ')
     let sender = ''
     let time = ''
-    let texts = []
     let isYou = false
-    let chatName = participants.map(p => p.fallback_name).join(', ')
 
     const escapeHTML = str => str.replace(/[&<>'"]/g,
         tag => ({
@@ -110,107 +156,75 @@ parser.on('data', (data) => {
 
     // Process the chat events for this conversation
     data.events.forEach(e => {
+
+        const name = participants.find(p => p.id.chat_id === e.sender_id.chat_id)?.fallback_name || 'Unknown'
+        let text = ''
+
+        // Text (or link) message
         if (e.hasOwnProperty('chat_message') && e.chat_message.message_content.hasOwnProperty('segment')) {
-            // TODO: What other segments are there here other than links and text
-            const text = escapeHTML(e.chat_message.message_content.segment.filter(s => s.type === 'TEXT').map(s => s.text).join())
-            let link = e.chat_message.message_content.segment.filter(s => s.type === 'LINK').map(s => s.text).join()
+            text = escapeHTML(e.chat_message.message_content.segment.filter(s => s.type === 'TEXT').map(s => s.text).join())
+            const links = e.chat_message.message_content.segment.filter(s => s.type === 'LINK').map(s => s.text)
 
-            if (link) {
-                link = `<a href='${link}' target='_blank'>${link}</a>`
-            }
-
-            const name = participants.find(p => p.id.chat_id === e.sender_id.chat_id)?.fallback_name || 'Unknown'
-
-            if (name === sender || !sender) {
-                // Add this message to the previous one
-                if (text) {
-                    texts.push(text)
-                }
-
-                if (link) {
-                    texts.push(link)
-                }
-            }
-            else {
-                numberOfMessages++
-
-                // insert this message into the collection and start a new one
-                const content = [
-                    {
-                        type: 'div',
-                        attributes: {
-                            class: 'message__name'
-                        },
-                        content: sender
-                    }
-                ]
-
-                texts.forEach(t => {
-                    content.push(
-                        {
-                            type: 'div',
-                            content: t
-                        }
-                    )
+            if (links && links.length) {
+                links.forEach(l => {
+                    text += `<a href='${l}' target='_blank'>${l}</a>`
                 })
-
-                content.push(
-                    {
-                        type: 'div',
-                        attributes: {
-                            class: 'message__time'
-                        },
-                        content: time.toISOString()
-                    }
-                )
-
-                messages.push(
-                    {
-                        type: 'div',
-                        attributes: {
-                            class: `message ${(isYou ? 'message--you' : '')}`
-                        },
-                        content: content
-                    }
-                )
-
-                texts = [text || link]
             }
-
-            time = new Date(Number.parseInt(e.timestamp) / 1000)
-            isYou = data.conversation.conversation.self_conversation_state.self_read_state.participant_id.chat_id === e.sender_id.chat_id
-            sender = name
         }
         // Conversation Rename
         else if (e.hasOwnProperty('conversation_rename')) {
             if (e.conversation_rename.new_name) {
                 console.log('Conversation renamed to: ' + e.conversation_rename.new_name)
                 chatName = e.conversation_rename.new_name
+                text += `<div class="message__hangout">Conversation Renamed: ${chatName}</div>`
             }
         }
         // Attachments
         else if (e.hasOwnProperty('chat_message') && e.chat_message.hasOwnProperty('message_content')) {
             e.chat_message.message_content.attachment.forEach(a => {
-                // TODO: Handle other types of attachments
                 if (a.embed_item.type[0] === 'PLUS_PHOTO') {
                     const url = new URL(a.embed_item.plus_photo.url)
-                    const parts = url.pathname.split('/')
-                    const attachmentName = parts[parts.length - 1]
-                    // TODO: Add the images to the chat log
+                    let imagePath = a.embed_item.plus_photo.url
+
+                    if (downloadAttachments) {
+                        const parts = url.pathname.split('/')
+                        const attachmentName = parts[parts.length - 1]
+                        let fileName = `${attachmentId}__${attachmentName}`      
+                        
+                        // For some reason hangouts leaves off the extension for a lot of image files so we'll just assume it's a jpg
+
+                        if (!fileName.match(/^.*\..*$/)) {
+                            fileName += '.jpg'
+                        }
+                        
+                        imagePath = `${dir}/attachments/${fileName}`
+
+                        // if (!fs.existsSync(imagePath)) {
+                        //     downloadRequests.push({
+                        //         localPath: imagePath,
+                        //         remotePath: url
+                        //     })
+                        // }
+
+                        attachmentId++
+                    }
+                    
+                    text += `<a target="_blank" href="../../${imagePath}"><img style="width:${imageWith}" src="../../${imagePath}"/></a>`
                 }
                 else {
-                    console.log('Other Attachment: ' + a)
+                    console.log('Other Attachment found')
+                    console.log(a)
                 }
             })
         }
         // Calls
         else if (e.hasOwnProperty('hangout_event')){
             if (e.hangout_event.event_type === 'START_HANGOUT') {
-                texts.push('<div class="message__hangout">Hangout Started</div>')
+                text += '<div class="message__hangout">Hangout Started</div>'
             }
             else if (e.hangout_event.event_type === 'END_HANGOUT') {
                 const duration = new Date(e.hangout_event.hangout_duration_secs * 1000).toISOString().substr(11, 8)
-                texts.push(`<div class="message__hangout">Hangout Ended +${duration}</div>`)
+                text += `<div class="message__hangout">Hangout Ended +${duration}</div>`
             }
         }
         // User change
@@ -218,21 +232,78 @@ parser.on('data', (data) => {
             const name = participants.find(p => p.id.chat_id === e.membership_change.participant_id.chat_id)?.fallback_name || 'Unknown'
 
             if (e.membership_change.type === 'JOIN') {
-                texts.push(`<div class="message__hangout">${name} Joined</div>`)
+                text += `<div class="message__hangout">${name} Joined</div>`
             }
             else if (e.membership_change.type === ' LEAVE') {
-                texts.push(`<div class="message__hangout">${name} Left</div>`)
+                text += `<div class="message__hangout">${name} Left</div>`
             }
         }
         else {
+            // This is just here to log out any additional message types not already hadnled for adding in the future (if there are any)
             console.log(e)
         }
+
+        if (name === sender || !sender) {
+            // Add this message to the previous one
+            if (text) {
+                texts.push(text)
+            }
+        }
+        else {
+            numberOfMessages++
+
+            // insert this message into the collection and start a new one
+            const content = [
+                {
+                    type: 'div',
+                    attributes: {
+                        class: 'message__name'
+                    },
+                    content: sender
+                }
+            ]
+
+            texts.forEach(t => {
+                content.push(
+                    {
+                        type: 'div',
+                        content: t
+                    }
+                )
+            })
+
+            content.push(
+                {
+                    type: 'div',
+                    attributes: {
+                        class: 'message__time'
+                    },
+                    content: time.toISOString()
+                }
+            )
+
+            messages.push(
+                {
+                    type: 'div',
+                    attributes: {
+                        class: `message ${(isYou ? 'message--you' : '')}`
+                    },
+                    content: content
+                }
+            )
+
+            texts = [text]
+        }
+
+        time = new Date(Number.parseInt(e.timestamp) / 1000)
+        isYou = data.conversation.conversation.self_conversation_state.self_read_state.participant_id.chat_id === e.sender_id.chat_id
+        sender = name
     })
 
     const chat = {
         type: 'div',
         attributes: {
-            'data-filename': `${fn}.html`,
+            'data-filename': `chats/${fn}.html`,
             class: 'chat'
         },
         content: [
@@ -271,7 +342,7 @@ parser.on('data', (data) => {
                         rel: 'stylesheet',
                         type: 'text/css',
                         media: 'screen',
-                        href: 'chat.css'
+                        href: '../chat.css'
                     }
                 }
             ]
@@ -291,6 +362,6 @@ parser.on('data', (data) => {
     ]
 
     if (numberOfMessages) {
-        new htmlCreator(html).renderHTMLToFile(`./${dir}/${fn}.html`)
+        new htmlCreator(html).renderHTMLToFile(`./${dir}/chats/${fn}.html`)
     }
 })
