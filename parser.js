@@ -29,11 +29,17 @@ let downloadIndex = 0
 
 const downloadFile = (request, callback) => {
     https.get(request.remotePath, (response) => {
-        const file = fs.createWriteStream(request.localPath)
-        response.pipe(file).once('close', () => {
-            file.close()
+        if (response.statusCode === 200) {
+            const file = fs.createWriteStream(request.localPath)
+            response.pipe(file).once('close', () => {
+                file.close()
+                callback()
+            })
+        }
+        else {
+            console.error(`Error downloading attachment: Http Status Code: ${response.statusCode}`)
             callback()
-        })
+        }
     })
 }
 
@@ -183,33 +189,53 @@ parser.on('data', (data) => {
         else if (e.hasOwnProperty('chat_message') && e.chat_message.hasOwnProperty('message_content')) {
             e.chat_message.message_content.attachment.forEach(a => {
                 if (a.embed_item.type[0] === 'PLUS_PHOTO') {
-                    const url = new URL(a.embed_item.plus_photo.url)
-                    let imagePath = a.embed_item.plus_photo.url
-
-                    if (downloadAttachments) {
+                    const photoUrl = new URL(a.embed_item.plus_photo.url)
+                    let imagePath = ''
+                    let videoPath = ''
+                    
+                    const addExtension = (url, id, ext) => {
+                        const fileExtensionPattern = /^.*\..*$/
                         const parts = url.pathname.split('/')
                         const attachmentName = parts[parts.length - 1]
-                        let fileName = `${attachmentId}__${attachmentName}`      
-                        
-                        // For some reason hangouts leaves off the extension for a lot of image files so we'll just assume it's a jpg
+                        let fileName = `${id}__${attachmentName}`
 
-                        if (!fileName.match(/^.*\..*$/)) {
-                            fileName += '.jpg'
+                        if (!fileName.match(fileExtensionPattern)) {
+                            fileName += ext
                         }
-                        
-                        imagePath = `${dir}/attachments/${fileName}`
 
-                        // if (!fs.existsSync(imagePath)) {
-                        //     downloadRequests.push({
-                        //         localPath: imagePath,
-                        //         remotePath: url
-                        //     })
-                        // }
+                        return fileName
+                    }
+
+                    if (downloadAttachments) {
+                        
+                        imagePath = `${dir}/attachments/${addExtension(photoUrl, attachmentId, '.jpg')}`
+
+                        if (!fs.existsSync(imagePath)) {
+                            downloadRequests.push({
+                                localPath: imagePath,
+                                remotePath: photoUrl
+                            })
+                        }
+
+                        // This is a video we can need to download it and update the link path
+                        if (a.embed_item.plus_photo.download_url) {
+                            const videoUrl = new URL(a.embed_item.plus_photo.download_url)
+
+                            videoPath = `${dir}/attachments/${addExtension(videoUrl, attachmentId, '.mp4')}`
+
+                            if (!fs.existsSync(videoPath)) {
+                                downloadRequests.push({
+                                    localPath: videoPath,
+                                    remotePath: videoUrl
+                                })
+                            }
+                            
+                        }
 
                         attachmentId++
                     }
                     
-                    text += `<a target="_blank" href="../../${imagePath}"><img style="width:${imageWith}" src="../../${imagePath}"/></a>`
+                    text += `<a target="_blank" href="../../${videoPath || imagePath}"><img style="width:${imageWith}" src="../../${imagePath}"/></a>`
                 }
                 else {
                     console.log('Other Attachment found')
