@@ -13,7 +13,7 @@ const dir = 'output'
 const dataFileName = 'hangouts.json'
 
 // The default inline with of images
-const imageWith = '20em'
+const imageWidth = '20em'
 
 // Set to true if you'd like the attachments downloaded
 const downloadAttachments = true
@@ -37,7 +37,7 @@ const downloadFile = (request, callback) => {
             })
         }
         else {
-            console.error(`Error downloading attachment: Http Status Code: ${response.statusCode}`)
+            console.error(`Error downloading attachment from ${request.remotePath}: Http Status Code: ${response.statusCode}`)
             callback()
         }
     })
@@ -235,7 +235,7 @@ parser.on('data', (data) => {
                         attachmentId++
                     }
                     
-                    text += `<a target="_blank" href="../../${videoPath || imagePath}"><img style="width:${imageWith}" src="../../${imagePath}"/></a>`
+                    text += `<a target="_blank" href="../../${videoPath || imagePath}"><img style="width:${imageWidth}" src="../../${imagePath}"/></a>`
                 }
                 else {
                     console.log('Other Attachment found')
